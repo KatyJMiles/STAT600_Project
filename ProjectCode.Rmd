@@ -8,7 +8,7 @@ output: pdf_document
 
 ## Project Outline
 
--   Code, in Rcpp, the proposed stratified bootstrap method
+-   Code, in Rcpp, the proposed stratified bootstrap method [Done]
 -   Code, in Rcpp, the proposed separated bootstrap method
 -   Code, in Rcpp, the proposed label switching adjustment, and then perform parametric bootstrap.
 -   Code, in Rcpp, regular parametric bootstrap method
@@ -16,7 +16,50 @@ output: pdf_document
 -   Compare results through tables and graphs
 -   Summarize where certain methods fail, succeed, and possible use cases for each
 
-```{Rcpp}
 
+# Stratified Bootstrap Pseudocode
+
+```{Rcpp}
+#include <RcppArmadillo.h>
+// [[Rcpp::depends(RcppArmadillo)]]
+using namespace Rcpp;
+using namespace arma;
+
+//[[Rcpp::export]]
+vec stratBoot(NumericVector sample, NumericVector classes) {
+  // Find the cluster proportions
+  int c = unique(classes).size();
+  NumericVector c_prop;
+  for (int i = 0; i < c; i++) {
+    int c_count = 0;
+    for (int j = 0; j < classes.size(); j++) {
+      if (classes[j] == i) {
+        c_count++;
+      }
+    }
+    c_prop.push_back(c_count);
+  }
+  
+  // Create bootstrap clusters
+  vec fullSample;
+  for (int i = 0; i < c; i++) {
+    NumericVector clusterSample;
+    for (int j = 0; j < classes.size(); j++) {
+      if (classes[j] == i) {
+        clusterSample.push_back(sample[j]);
+      }
+    }
+    vec bootSample = Rcpp::sample(clusterSample, c_prop[i], true, R_NilValue);
+    fullSample = join_cols(fullSample, bootSample);
+  }
+  return fullSample;
+}
+```
+
+```{r}
+sample = rnorm(10)
+classes = rep(c(0,1), 5)
+
+t = stratBoot(sample, classes)
 ```
 
