@@ -1,0 +1,22 @@
+---
+title: "Project"
+author: "Katy Miles"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+# Implementing Solutions to Label Switching for Bootstrap of EM Estimates
+
+## Project Outline
+
+-   Code, in Rcpp, the proposed stratified bootstrap method
+-   Code, in Rcpp, the proposed separated bootstrap method
+-   Code, in Rcpp, the proposed label switching adjustment, and then perform parametric bootstrap.
+-   Code, in Rcpp, regular parametric bootstrap method
+-   Obtain EM algorithm estimates for simulated data from a chosen mixture mode
+-   Compare results through tables and graphs
+-   Summarize where certain methods fail, succeed, and possible use cases for each
+
+```{Rcpp}
+
+```
+
