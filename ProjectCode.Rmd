@@ -17,7 +17,7 @@ output: pdf_document
 -   Summarize where certain methods fail, succeed, and possible use cases for each
 
 
-# Stratified Bootstrap Pseudocode
+# Stratified Bootstrap 
 
 ```{Rcpp}
 #include <RcppArmadillo.h>
@@ -26,33 +26,38 @@ using namespace Rcpp;
 using namespace arma;
 
 //[[Rcpp::export]]
-vec stratBoot(NumericVector sample, NumericVector classes) {
+vec stratBoot(NumericVector sample, NumericVector classes, int iterations) {
+  vec theta;
   // Find the cluster proportions
-  int c = unique(classes).size();
-  NumericVector c_prop;
-  for (int i = 0; i < c; i++) {
-    int c_count = 0;
-    for (int j = 0; j < classes.size(); j++) {
-      if (classes[j] == i) {
-        c_count++;
+  for (int b = 0; b < iterations; b++ ) {
+    int c = unique(classes).size();
+    NumericVector c_prop;
+    for (int i = 0; i < c; i++) {
+      int c_count = 0;
+      for (int j = 0; j < classes.size(); j++) {
+        if (classes[j] == i) {
+          c_count++;
+        }
       }
+      c_prop.push_back(c_count);
     }
-    c_prop.push_back(c_count);
-  }
-  
-  // Create bootstrap clusters
-  vec fullSample;
-  for (int i = 0; i < c; i++) {
-    NumericVector clusterSample;
-    for (int j = 0; j < classes.size(); j++) {
-      if (classes[j] == i) {
-        clusterSample.push_back(sample[j]);
+    
+    // Create bootstrap clusters
+    vec fullSample;
+    for (int i = 0; i < c; i++) {
+      NumericVector clusterSample;
+      for (int j = 0; j < classes.size(); j++) {
+        if (classes[j] == i) {
+          clusterSample.push_back(sample[j]);
+        }
       }
+      vec bootSample = Rcpp::sample(clusterSample, c_prop[i], true, R_NilValue);
+      fullSample = join_cols(fullSample, bootSample);
+      // EM algorithm
+      theta = join_cols(theta, EM(full_sample, theta, epsilon));
     }
-    vec bootSample = Rcpp::sample(clusterSample, c_prop[i], true, R_NilValue);
-    fullSample = join_cols(fullSample, bootSample);
   }
-  return fullSample;
+  return theta;
 }
 ```
 
@@ -63,3 +68,142 @@ classes = rep(c(0,1), 5)
 t = stratBoot(sample, classes)
 ```
 
+# Seperated Bootstrap 
+
+Our proposal for such problems is to apply bootstrap estimation only
+after a reliable valid solution (cluster partition) is found, what we will call the chosen solution
+from now. 
+
+- This is equivalent to saying that once an acceptable solution has been found, each
+cluster can be considered as a mutually independent population.
+
+- Then, the bootstrap procedure
+is performed separately on each cluster of the chosen solution, with the CIs computed using a
+single-component model for each generated sample.
+
+- Indeed, this implies that we consider the chosen solution as the best that can be found, and
+neglect the fact that another may exist, possibly yielding a better fit to the data. However, a better
+fit does not necessarily imply a better and more useful clustering. Therefore, one needs to find
+the solution most suitable to the data based on all available information, including that from
+statistical criteria and from knowledge of the data. In this case, by applying the bootstrap to the
+chosen clustering partition, we do not measure the stability of the solution, but rather isolate the
+variability of the parameters for this particular clustering partition. This makes sense, especially
+when two bootstrap iterations of a given complex model may be completely incompatible (due
+to cluster instability, for instance), resulting in the relabeling strategy being proven wrong.
+
+```{Rcpp}
+
+#include <RcppArmadillo.h>
+// [[Rcpp::depends(RcppArmadillo)]]
+using namespace Rcpp;
+using namespace arma;
+
+namespace helper{
+  NumericVector EM(mat y, double mu, double lambda, double p, double epsilon) {
+    colvec y_vec = y.col(0);
+    int n = y_vec.size();
+    double p_up;
+    double mu_up;
+    double lambda_up;
+    double diff = 100;
+    while (diff > epsilon) {
+      // Delta update
+      colvec first = p*lambda*exp(-y*lambda);
+      colvec second= (1 - p)*mu*exp(-y*mu);
+      mat delta_vec = first / (first + second);
+      
+      // p update
+      p_up = accu(delta_vec) / n;
+      
+      // mu update
+      mu_up = accu(1 - delta_vec) / accu(trans(1 - delta_vec)*y);
+    
+      // lambda update  
+      lambda_up = accu(delta_vec) / accu(trans(delta_vec)*y);
+  
+      // Update difference
+      diff = sum(abs(p_up - p) + abs(mu_up - mu) + abs(lambda_up - lambda)) / 
+        sum(abs(p) + abs(mu) + abs(lambda));
+  
+      // Do updates
+      p = p_up;
+      mu = mu_up;
+      lambda = lambda_up;
+    }
+    NumericVector toReturn = {mu,lambda,p}; 
+    
+    return toReturn;
+  }
+}
+
+//[[Rcpp::export]]
+vec sepBoot(NumericVector sample, NumericVector classes, int iterations) {
+  NumericVector numClasses = unique(classes);
+  for (int c = 0; c < numClasses.size(); c++) {
+    for (int b = 0; b < iterations; b++) {
+      NumericVector classSample;
+      for (int i = 0; i < sample.size(); i++) {
+        if (classes[i] == c) {
+          classSample.push_back(sample[i]);
+        }
+      }
+      vec bootSample = Rcpp::sample(classSample, classSample.size(), true, R_NilValue);
+      theta.join_cols(theta, EM(bootSample, theta, epsilon));
+    }
+  }
+}
+
+```
+
+```{r}
+EM()
+```
+
+# Label Switching 
+
+```{Rcpp}
+#include <RcppArmadillo.h>
+// [[Rcpp::depends(RcppArmadillo)]]
+using namespace Rcpp;
+using namespace arma;
+
+//[[Rcpp::export]]
+vec sepBoot(NumericVector sample, NumericVector classes) {
+  NumericVector numClasses = unique(classes);
+  for (int c = 0; c < numClasses.size(); c++) {
+    NumericVector classSample;
+    for (int i = 0; i < sample.size(); i++) {
+      if (classes[i] == c) {
+        classSample.push_back(sample[i]);
+      }
+    }
+    vec bootSample = Rcpp::sample(classSample, classSample.size(), true, R_NilValue);
+  }
+}
+
+```
+
+# EM algorithm
+
+```{r}
+
+```
+
+# Simulations
+
+```{r}
+simulateData = function(n, lambda, mu, p) {
+  p_binom = rbinom(n, 1, p)
+  data = (p_binom)*rexp(n, rate = lambda) + (1 - p_binom)*rexp(n, rate = mu)
+  return(as.matrix(data))
+}
+
+n = 100
+lambda = 1
+p = .25
+mu = 2
+data_list = list()
+for (i in 1:100) {
+  data_list = append(data_list, list(simulateData(n, lambda, mu, p)))
+}
+```
