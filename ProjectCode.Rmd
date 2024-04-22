@@ -148,7 +148,7 @@ vec sepBoot(NumericVector sample, NumericVector classes, int iterations) {
         }
       }
       vec bootSample = Rcpp::sample(classSample, classSample.size(), true, R_NilValue);
-      theta.join_cols(theta, EM(bootSample, theta, epsilon));
+      theta.join_cols(theta, singleComponent(bootSample, theta, epsilon));
     }
   }
 }
@@ -167,8 +167,50 @@ EM()
 using namespace Rcpp;
 using namespace arma;
 
+namespace helper{
+  mat class_probs(mat y, double mu, double lambda, double p, double epsilon) {
+    colvec y_vec = y.col(0);
+    int n = y_vec.size();
+    double p_up;
+    double mu_up;
+    double lambda_up;
+    double diff = 100;
+    while (diff > epsilon) {
+      // Delta update
+      colvec first = p*lambda*exp(-y*lambda);
+      colvec second= (1 - p)*mu*exp(-y*mu);
+      mat delta_vec = first / (first + second);
+      
+      // p update
+      p_up = accu(delta_vec) / n;
+      
+      // mu update
+      mu_up = accu(1 - delta_vec) / accu(trans(1 - delta_vec)*y);
+    
+      // lambda update  
+      lambda_up = accu(delta_vec) / accu(trans(delta_vec)*y);
+  
+      // Update difference
+      diff = sum(abs(p_up - p) + abs(mu_up - mu) + abs(lambda_up - lambda)) / 
+        sum(abs(p) + abs(mu) + abs(lambda));
+      
+      
+  
+      // Do updates
+      p = p_up;
+      mu = mu_up;
+      lambda = lambda_up;
+    }
+
+    return delta_vec;
+  }
+
+}
+
 //[[Rcpp::export]]
-vec sepBoot(NumericVector sample, NumericVector classes) {
+vec complh(NumericVector sample, NumericVector classes) {
+  
+  mat probs = helper::class_probs(sample, mu, lambda, p, epsilon)
   NumericVector numClasses = unique(classes);
   for (int c = 0; c < numClasses.size(); c++) {
     NumericVector classSample;
@@ -186,24 +228,110 @@ vec sepBoot(NumericVector sample, NumericVector classes) {
 # EM algorithm
 
 ```{r}
+library(tidyverse)
+library(emdbook)
+data = read.csv("C:/Users/16189/Desktop/STAT 630/mixture.csv")
+
+## EM algorithm
+
+# Step 1: Initialization
+p1_em = c(1/3)
+p2_em = c(1/3)
+p3_em = c(1/3)
+mu1_em = c(-1.5, 2)
+mu2_em = c(2, 2)
+mu3_em = c(-5, 1.5)
+sig1_em <- matrix(c(2, 0, 0, 2), nrow = 2) 
+sig2_em <- matrix(c(1.5, 0, 0, 2), nrow = 2) 
+sig3_em <- matrix(c(1, 0, 0, 2), nrow = 2) 
+
+n = length(data$X1)
+y = as.matrix(data)
+prev_parameters = 100
+diff = 50
+while (diff > 0.00001) {
+  # E
+  w1 = p1_em * dmvnorm(y, mu1_em, sig1_em)
+  w2 = p2_em * dmvnorm(y, mu2_em, sig2_em)
+  w3 = p3_em * dmvnorm(y, mu3_em, sig3_em)
+  w1_tot = w1 / (w1 + w2 + w3)
+  w2_tot = w2 / (w1 + w2 + w3)
+  w3_tot = w3 / (w1 + w2 + w3)
+  
+  #M
+  mu1_em = apply(w1_tot * y / sum(w1_tot), 2, sum)
+  mu2_em = apply(w2_tot * y / sum(w2_tot), 2, sum)
+  mu3_em = apply(w3_tot * y / sum(w3_tot), 2, sum)
+  dev1 = y - t(matrix(rep(mu1_em, n), ncol = n))
+  sig1_em = (t(w1_tot * dev1) %*% dev1)/sum(w1_tot)
+  dev2 = y - t(matrix(rep(mu2_em, n), ncol = n))
+  sig2_em = (t(w2_tot*dev2) %*% dev2)/sum(w2_tot)
+  dev3 = y - t(matrix(rep(mu3_em, n), ncol = n))
+  sig3_em = (t(w3_tot*dev3) %*% dev3)/sum(w3_tot)	
+  p1_em = sum(w1_tot)/n
+  p2_em = sum(w2_tot)/n
+  p3_em = sum(w3_tot)/n
+  diff = abs(prev_parameters - p1_em)
+  prev_parameters = p1_em
+}
+
 
 ```
 
 # Simulations
 
 ```{r}
-simulateData = function(n, lambda, mu, p) {
-  p_binom = rbinom(n, 1, p)
-  data = (p_binom)*rexp(n, rate = lambda) + (1 - p_binom)*rexp(n, rate = mu)
+simulateData = function(n, lambda, mu, theta, p) {
+  data = p[1]*rnorm(n, lambda) + p[2]*rnorm(n, mu) + p[3]*rnorm(n, theta)
   return(as.matrix(data))
 }
 
 n = 100
 lambda = 1
-p = .25
+prob = c(1/3,1/3,1/3)
 mu = 2
+theta = c(1,2,3)
 data_list = list()
 for (i in 1:100) {
-  data_list = append(data_list, list(simulateData(n, lambda, mu, p)))
+  data_list = append(data_list, list(simulateData(n, lambda, mu, theta, p)))
 }
+
+ggplot() + 
+  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), lambda))) + 
+  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), mu))) + 
+  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), theta))) 
+
+complh = function(n, theta_hat) {
+  # Generating sample
+  x = numeric(n)
+  z = matrix(nrow = 3, ncol = n)
+  for (i in 1:n) {
+    j = sample(c(1,2,3), 1, prob = prob)
+    z[1, i] = ifelse(j == 1, 1, 0)
+    z[2, i] = ifelse(j == 2, 1, 0)
+    z[3, i] = ifelse(j == 3, 1, 0)
+    x[i] = rnorm(1, theta[j])
+  }
+  
+  perm = permn(1:3)
+  last = 0
+  ratio_sum = numeric(length(perm))
+  ratio = numeric(n)
+  for (k in 1:length(perm)) {
+    p = perm[[k]]
+    for (i in 1:n) {
+      num = 0
+      for (j in 1:3) {
+        eval = z[j,i]*log(prob[p[j]]*dnorm(x[i], theta_hat[p[j]]))
+        num = num + eval
+      }
+      ratio[i] = num
+    }
+    ratio_sum[k] = sum(ratio)
+  }
+  which.max(ratio_sum)
+}
+
 ```
+
+
