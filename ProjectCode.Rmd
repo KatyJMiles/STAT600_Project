@@ -25,9 +25,31 @@ output: pdf_document
 using namespace Rcpp;
 using namespace arma;
 
+namespace helper{
+  vec em_norm(NumericVector y, vec p, vec theta) {
+    int n = y.size();
+    vec toReturn;
+    for (int i = 0; i < 10; i++) {
+      NumericVector w1 = p[1] * Rcpp::dnorm(y, theta[1], 1, false);
+      NumericVector w2 = p[2] * Rcpp::dnorm(y, theta[2], 1, false);
+      NumericVector w1_tot = w1 / (w1 + w2);
+      NumericVector w2_tot = w2 / (w1 + w2);
+      
+      theta[1] = sum(w1_tot * y) / sum(w1_tot);
+      theta[2] = sum(w2_tot * y) / sum(w2_tot);
+     
+      p[1] = sum(w1_tot)/n;
+      p[2] = sum(w2_tot)/n;
+      
+    }
+    return join_cols(p, theta);
+  }
+}
+    
 //[[Rcpp::export]]
 vec stratBoot(NumericVector sample, NumericVector classes, int iterations) {
   vec theta;
+  vec p;
   // Find the cluster proportions
   for (int b = 0; b < iterations; b++ ) {
     int c = unique(classes).size();
@@ -43,7 +65,7 @@ vec stratBoot(NumericVector sample, NumericVector classes, int iterations) {
     }
     
     // Create bootstrap clusters
-    vec fullSample;
+    NumericVector fullSample;
     for (int i = 0; i < c; i++) {
       NumericVector clusterSample;
       for (int j = 0; j < classes.size(); j++) {
@@ -52,18 +74,20 @@ vec stratBoot(NumericVector sample, NumericVector classes, int iterations) {
         }
       }
       vec bootSample = Rcpp::sample(clusterSample, c_prop[i], true, R_NilValue);
-      fullSample = join_cols(fullSample, bootSample);
-      // EM algorithm
-      theta = join_cols(theta, EM(full_sample, theta, epsilon));
+      for (int b = 0; b < bootSample.size(); b++) {
+        fullSample.push_back(bootSample[b]);
+      }
     }
+    
+    // EM algorithm
+    theta = join_cols(theta, helper::em_norm(fullSample, p, theta));
   }
   return theta;
 }
 ```
 
 ```{r}
-sample = rnorm(10)
-classes = rep(c(0,1), 5)
+
 
 t = stratBoot(sample, classes)
 ```
@@ -148,16 +172,16 @@ vec sepBoot(NumericVector sample, NumericVector classes, int iterations) {
         }
       }
       vec bootSample = Rcpp::sample(classSample, classSample.size(), true, R_NilValue);
-      theta.join_cols(theta, singleComponent(bootSample, theta, epsilon));
+      theta.join_cols(theta, (bootSample, theta, epsilon));
+      estimate = optim(c(beta_0, beta_1, sigma), loglike,
+      x = window_data$day,
+      control = list(fnscale = -1))$par
     }
   }
 }
 
 ```
 
-```{r}
-EM()
-```
 
 # Label Switching 
 
@@ -227,93 +251,130 @@ vec complh(NumericVector sample, NumericVector classes) {
 
 # EM algorithm
 
-```{r}
-library(tidyverse)
-library(emdbook)
-data = read.csv("C:/Users/16189/Desktop/STAT 630/mixture.csv")
+```{Rcpp}
+#include <RcppArmadillo.h>
+// [[Rcpp::depends(RcppArmadillo)]]
+using namespace Rcpp;
+using namespace arma;
 
-## EM algorithm
+//[[Rcpp::export]]
+List em_norm(NumericVector y, NumericVector p, NumericVector theta, 
+             bool classes = false) {
+  int n = y.size();
+  NumericVector w1_tot;
+  NumericVector w2_tot;
+  double mu1 = theta[0];
+  double mu2 = theta[1];
+  double p1 = p[0];
+  double p2 = p[1];
+  for (int i = 0; i < 50; i++) {
+      // E
+      NumericVector w1 = p1 * dnorm(y, mu1);
+      NumericVector w2 = p2 * dnorm(y, mu2);
 
-# Step 1: Initialization
-p1_em = c(1/3)
-p2_em = c(1/3)
-p3_em = c(1/3)
-mu1_em = c(-1.5, 2)
-mu2_em = c(2, 2)
-mu3_em = c(-5, 1.5)
-sig1_em <- matrix(c(2, 0, 0, 2), nrow = 2) 
-sig2_em <- matrix(c(1.5, 0, 0, 2), nrow = 2) 
-sig3_em <- matrix(c(1, 0, 0, 2), nrow = 2) 
-
-n = length(data$X1)
-y = as.matrix(data)
-prev_parameters = 100
-diff = 50
-while (diff > 0.00001) {
-  # E
-  w1 = p1_em * dmvnorm(y, mu1_em, sig1_em)
-  w2 = p2_em * dmvnorm(y, mu2_em, sig2_em)
-  w3 = p3_em * dmvnorm(y, mu3_em, sig3_em)
-  w1_tot = w1 / (w1 + w2 + w3)
-  w2_tot = w2 / (w1 + w2 + w3)
-  w3_tot = w3 / (w1 + w2 + w3)
-  
-  #M
-  mu1_em = apply(w1_tot * y / sum(w1_tot), 2, sum)
-  mu2_em = apply(w2_tot * y / sum(w2_tot), 2, sum)
-  mu3_em = apply(w3_tot * y / sum(w3_tot), 2, sum)
-  dev1 = y - t(matrix(rep(mu1_em, n), ncol = n))
-  sig1_em = (t(w1_tot * dev1) %*% dev1)/sum(w1_tot)
-  dev2 = y - t(matrix(rep(mu2_em, n), ncol = n))
-  sig2_em = (t(w2_tot*dev2) %*% dev2)/sum(w2_tot)
-  dev3 = y - t(matrix(rep(mu3_em, n), ncol = n))
-  sig3_em = (t(w3_tot*dev3) %*% dev3)/sum(w3_tot)	
-  p1_em = sum(w1_tot)/n
-  p2_em = sum(w2_tot)/n
-  p3_em = sum(w3_tot)/n
-  diff = abs(prev_parameters - p1_em)
-  prev_parameters = p1_em
+      w1_tot = w1 / (w1 + w2);
+      w2_tot = w2 / (w1 + w2);
+      
+      //M
+      mu1 = sum(w1_tot * y) / sum(w1_tot);
+      mu2 = sum(w2_tot * y) / sum(w2_tot);
+      p1 = sum(w1_tot)/n;
+      p2 = sum(w2_tot)/n;
+  }
+  NumericVector p_hat = {p1, p2};
+  NumericVector theta_hat = {mu1, mu2};
+  if (classes) {
+      return List::create(p_hat, theta_hat, w1_tot, w2_tot);
+  }
+  return List::create(p_hat, theta_hat);
 }
-
-
 ```
 
-# Simulations
 
 ```{r}
-simulateData = function(n, lambda, mu, theta, p) {
-  data = p[1]*rnorm(n, lambda) + p[2]*rnorm(n, mu) + p[3]*rnorm(n, theta)
-  return(as.matrix(data))
+# Stratified bootstrap:  R version
+stratBoot = function(data, classes, params, iterations) {
+  theta = params[3:4]
+  p = params[1:2]
+  result = c()
+  c = length(p)
+  # Find the cluster proportions
+  for (b in 1:iterations) {
+    # Create bootstrap clusters
+    fullSample = c()
+    for (i in 1:c) {
+      clusterSample = c()
+      for (j in 1:length(classes)) {
+        if (classes[j] == i) {
+          clusterSample = append(clusterSample, data[j])
+        }
+      }
+      if (length(clusterSample) > 0) {
+        bootSample = sample(clusterSample, p[i]*length(data), TRUE)
+        fullSample = append(fullSample, bootSample)
+      }
+    }
+    
+    # EM algorithm
+    result = rbind(result, unlist(em_norm(fullSample, p, theta)))
+  }
+  return(result)
 }
 
-n = 100
-lambda = 1
-prob = c(1/3,1/3,1/3)
-mu = 2
-theta = c(1,2,3)
-data_list = list()
-for (i in 1:100) {
-  data_list = append(data_list, list(simulateData(n, lambda, mu, theta, p)))
+regularBoot = function(data, params, iterations) {
+  s = data
+  theta = matrix(nrow = 0, ncol = 4)
+  
+  for (j in 1:iterations) {
+    # Get EM estimates 
+    theta = rbind(theta, unlist(em_norm(s, params[1:2], params[3:4])))
+    
+    # Increment j
+    s = as.matrix(sample(data, length(data), replace = TRUE))
+  }
+  return(theta)
 }
 
-ggplot() + 
-  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), lambda))) + 
-  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), mu))) + 
-  geom_line(aes(seq(-10,10,.1), dnorm(seq(-10,10,.1), theta))) 
 
-complh = function(n, theta_hat) {
+sepBoot = function(sample, classes, params, iterations) {
+  numClasses = unique(classes)
+  result = c()
+  for (c in 1:length(numClasses)) {
+    for (b in 1:iterations) {
+      classSample = c()
+      for (i in 1:length(sample)) {
+        if (classes[i] == c) {
+          classSample = append(classSample, sample[i])
+        }
+      }
+      bootSample = sample(classSample, length(classSample), TRUE)
+      # EM algorithm
+      result = rbind(result, em_norm(bootSample, c(1,0), params[3:4], classes = FALSE))
+    }
+  }
+  return(0)
+}
+```
+
+# Re-Labeling
+
+```{r}
+complh = function(n, m, theta_hat, p_hat) {
   # Generating sample
   x = numeric(n)
-  z = matrix(nrow = 3, ncol = n)
+  z = matrix(nrow = m, ncol = n)
+  label = numeric(n)
   for (i in 1:n) {
-    j = sample(c(1,2,3), 1, prob = prob)
+    j = sample(1:m, 1, prob = p_hat)
     z[1, i] = ifelse(j == 1, 1, 0)
     z[2, i] = ifelse(j == 2, 1, 0)
-    z[3, i] = ifelse(j == 3, 1, 0)
-    x[i] = rnorm(1, theta[j])
+    label[i] = j
+    #z[3, i] = ifelse(j == 3, 1, 0)
+    x[i] = rnorm(1, theta_hat[j])
   }
   
-  perm = permn(1:3)
+  # Label Adjustment using complete log likelihood
+  perm = combinat::permn(1:m)
   last = 0
   ratio_sum = numeric(length(perm))
   ratio = numeric(n)
@@ -321,17 +382,273 @@ complh = function(n, theta_hat) {
     p = perm[[k]]
     for (i in 1:n) {
       num = 0
-      for (j in 1:3) {
-        eval = z[j,i]*log(prob[p[j]]*dnorm(x[i], theta_hat[p[j]]))
+      for (j in 1:m) {
+        eval = z[j,i]*log(p_hat[p[j]]*dnorm(x[i], theta_hat[p[j]]))
         num = num + eval
       }
       ratio[i] = num
     }
     ratio_sum[k] = sum(ratio)
   }
-  which.max(ratio_sum)
+  max_perm = perm[which.max(ratio_sum)]
+  return(c(reorder(p_hat, max_perm[[1]]), reorder(theta_hat, max_perm[[1]])))
+}
+```
+
+```{Rcpp}
+#include <RcppArmadillo.h>
+// [[Rcpp::depends(RcppArmadillo)]]
+
+// [[Rcpp::export]]
+arma::vec arma_sort(arma::vec x, arma::vec y) {
+    return x(arma::sort_index(y));
+}
+
+
+
+```
+
+```{r}
+A <- c(0.5, 0.4)
+B <- c(2, 1)
+arma_sort(A, B)
+
+```
+
+```{Rcpp}
+#include <RcppArmadillo.h>
+#include <bits/stdc++.h> 
+
+// [[Rcpp::depends(RcppArmadillo)]]
+using namespace Rcpp;
+using namespace arma;
+using namespace std;
+
+namespace helper{ 
+  NumericMatrix findPermutations(IntegerVector c, int n) { 
+    NumericVector perm;
+  
+    // Sort the given array 
+    sort(c.begin(), c.end()); 
+    // Find all possible permutations 
+    do {
+      for (int i = 0; i < n; i++) { 
+        perm.push_back(c[i]); 
+      } 
+    } while (next_permutation(c.begin(), c.end()));
+    NumericMatrix toReturn( 2 , n , perm.begin() );
+    return toReturn;
+  }
+
+  arma::vec perm_sort(arma::vec x, arma::vec y) {
+      return x(arma::sort_index(y));
+  }
+
+}
+
+//[[Rcpp::export]]
+vec complh(int n, vec theta_hat, vec p_hat) {
+  // Generating sample
+  int m = theta_hat.size();
+  NumericVector x(n);
+  NumericMatrix z(m, n);
+  NumericVector label(n);
+  IntegerVector classes =  seq(1, m);
+  NumericVector prop;
+  prop[0] = p_hat[0];
+  prop[1] = p_hat[1];
+  for (int i = 0; i < n; i++) {
+    IntegerVector j = sample(classes, 1, prop);
+    if (j[0] ==1) {
+      z(1,i) = 1;
+    } else {
+      z(1,i) = 0;
+    }
+    if (j[0] == 2) {
+      z(2,i) = 1;
+    } else {
+      z(2,i) = 0;
+    }
+    NumericVector obs = rnorm(1, theta_hat[j[0]]);
+    x[i] = obs[0];
+  }
+  // Label Adjustment using complete log likelihood
+  NumericMatrix perm = helper::findPermutations(classes, m);
+
+  double ratio_sum = -10000000;
+  NumericVector ratio(n);
+  int max_perm = 0;
+  for (int k = 0; k < perm.nrow(); k++) {
+    NumericVector p = perm(k , _ );
+    for (int i = 0; i < n; i++) {
+      int num = 0;
+      for (int j = 0; j < m; j++) {
+        NumericVector first_arg;
+        first_arg.push_back(x[i]);
+        double mean = theta_hat[p[j]];
+        NumericVector eval = z(j,i)*log(p_hat[p[j]]*Rcpp::dnorm(first_arg, mean));
+        num = num + eval[0];
+      }
+      ratio[i] = num;
+    }
+    if (sum(ratio) > ratio_sum) {
+      ratio_sum = sum(ratio);
+      max_perm = k;
+    }
+  }
+  vec y = perm(max_perm, _);
+  vec sorted_p = helper::perm_sort(p_hat, y);
+  vec sorted_theta = helper::perm_sort(theta_hat, y);
+  return join_cols(sorted_p, sorted_theta);
 }
 
 ```
 
+```{r}
+fake_data = as.data.frame(matrix(c(x,label), ncol = 2))
+colnames(fake_data) = c("Value", "Label")
+fake_data = rowid_to_column(fake_data)
+fake_data = fake_data %>%
+  mutate(Label = as.factor(Label)) 
 
+ggplot() + 
+  geom_point(aes(Value, rowid, color = Label), fake_data) +
+  theme_minimal() + 
+  geom_text(x=3, y=30, label="Log-Likelihood = -412.6700")
+
+
+fake_data = fake_data %>%
+  mutate(Label = ifelse(Label == "1", "2", "1"))
+ggplot() + 
+  geom_point(aes(Value, rowid, color = Label), fake_data) +
+  theme_minimal() + 
+  annotate("text", x=8, y=13, label= "Log-Likelihood = -412.6700") 
+
+likelihood = function(x, p, theta) {
+  return(sum(log(p[1]*dnorm(x, theta[1]) + p[2]*dnorm(x, theta[2]))))
+}
+```
+
+
+```{r}
+library(tidyverse)
+regList = list()
+stratList = list()
+adjList = list()
+for (j in 1:100) {
+  # Simulate Data
+  n = 200
+  true_p = c(.5,.5)
+  true_theta = c(0, 0.5)
+  p_binom = rbinom(n, 1, true_p[1])
+  data = (p_binom)*rnorm(n, true_theta[1]) + (1 - p_binom)*rnorm(n, true_theta[2])
+  
+  # Get initial values from kmeans
+  initial_theta = kmeans(data, 2)$centers[,1]
+  initial_p = kmeans(data, 2)$size / length(data)
+  
+  # Perform EM
+  em_result = em_norm(data, initial_p, initial_theta, classes = TRUE)
+  theta_hat = em_result[[2]]
+  p_hat = em_result[[1]]
+  
+  # Set number of iterations
+  iterations = 100
+  
+  # Perform Non Parametric Bootstrap
+  regBoot = regularBoot(data, params = c(p_hat, theta_hat), iterations)
+  
+  # Perform Parametric Bootstrap with Label Adjustment
+  adjBoot = matrix(ncol = 4, nrow = iterations)
+  for (i in 1:iterations) {
+    # Take sample
+    p_binom = rbinom(n, 1, p_hat[1])
+    sample = (p_binom)*rnorm(n, theta_hat[1]) + (1 - p_binom)*rnorm(n,theta_hat[2])
+    
+    # Get estimates
+    em = em_norm(sample, p_hat, theta_hat, classes = FALSE)
+    
+    # Label Adjustment
+    adjBoot[i,] = as.numeric(as.character(complh(n, em[[2]], em[[1]])))
+  }
+  
+  # Perform Stratified Bootstrap
+  w2_tot = em_result[[4]]
+  w1_tot = em_result[[3]]
+  
+  df = data.frame(w1_tot, 
+             w2_tot)
+  df = df %>%
+    rowwise() %>%
+    mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot), 1, 2))
+  
+  strtBoot = stratBoot(data, df$Classification, c(p_hat, theta_hat), iterations)
+  regCI = c()
+  adjCI = c()
+  stratCI = c()
+  # Get quantile CI
+  for (i in 1:4) {
+    regCI = rbind(regCI, quantile(regBoot[,i], c(.025,.975)))
+    adjCI = rbind(adjCI, quantile(adjBoot[,i], c(.025, .975)))
+    stratCI = rbind(stratCI, quantile(strtBoot[,i], c(.025,.975)))
+  }
+  regList = append(regList, list(regCI))
+  adjList = append(adjList, list(adjCI))
+  stratList = append(stratList, list(stratCI))
+}
+```
+
+1000 Bootstrap runs, n = 200
+
+Scenario 1: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 0.5$$
+
+Scenario 2: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 1$$
+
+Scenario 3: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 1.5$$
+
+Scenario 4: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 2$$
+
+1000 Bootstrap runs, n = 50
+
+Scenario 1: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 0.5$$
+
+Scenario 2: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 1$$
+
+Scenario 3: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 1.5$$
+
+Scenario 4: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 2$$
+
+1000 Bootstrap runs, n = 200
+
+Scenario 1: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 0.5$$
+
+Scenario 2: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 1$$
+
+Scenario 3: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 1.5$$
+
+Scenario 4: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 2$$
+```{r}
+j = 3
+params = c(.5,.5,0,0.5)
+coverage = numeric(100)
+for (i in 1:100) {
+  CI = regList[[i]][j,]
+  coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+}
+sum(coverage)
+
+coverage = numeric(100)
+for (i in 1:100) {
+  CI = adjList[[i]][j,]
+  coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+}
+sum(coverage)
+
+coverage = numeric(100)
+for (i in 1:100) {
+  CI = stratList[[i]][j,]
+  coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+}
+sum(coverage)
+
+```
