@@ -4,19 +4,6 @@ author: "Katy Miles"
 date: "`r Sys.Date()`"
 output: html_document
 ---
-# Implementing Solutions to Label Switching for Bootstrap of EM Estimates
-
-## Project Outline
-
--   Code, in Rcpp, the proposed stratified bootstrap method [Done]
--   Code, in Rcpp, the proposed separated bootstrap method
--   Code, in Rcpp, the proposed label switching adjustment, and then perform parametric bootstrap.
--   Code, in Rcpp, regular parametric bootstrap method
--   Obtain EM algorithm estimates for simulated data from a chosen mixture mode
--   Compare results through tables and graphs
--   Summarize where certain methods fail, succeed, and possible use cases for each
-
-# EM algorithm
 
 ```{Rcpp}
 #include <RcppArmadillo.h>
@@ -56,82 +43,66 @@ List em_norm(NumericVector y, NumericVector p, NumericVector theta,
   return List::create(p_hat, theta_hat);
 }
 
-
-namespace helper{
-  NumericVector em_helper(NumericVector y, NumericVector p, NumericVector theta, 
-               bool classes = false) {
-    int n = y.size();
-    NumericVector w1_tot(n);
-    NumericVector w2_tot(n);
-    double mu1 = theta[0];
-    double mu2 = theta[1];
-    double p1 = p[0];
-    double p2 = p[1];
-    for (int i = 0; i < 50; i++) {
-        // E
-        NumericVector w1 = p1 * dnorm(y, mu1);
-        NumericVector w2 = p2 * dnorm(y, mu2);
-  
-        w1_tot = w1 / (w1 + w2);
-        w2_tot = w2 / (w1 + w2);
-        
-        //M
-        mu1 = sum(w1_tot * y) / sum(w1_tot);
-        mu2 = sum(w2_tot * y) / sum(w2_tot);
-        p1 = sum(w1_tot)/n;
-        p2 = sum(w2_tot)/n;
-    }
-    NumericVector ests = {p1, p2, mu1, mu2};
-    NumericVector w_tot = cbind(w1_tot, w2_tot);
-    if (classes) {
-        return cbind(ests, w_tot);
-    }
-    return ests;
-  }
-}
-
 //[[Rcpp::export]]
-NumericVector stratBoot(NumericVector data, NumericVector classes, 
-                        NumericVector params, int iterations) {
-  NumericVector theta = params[Range(2,3)];
-  NumericVector p = params[Range(0,1)];
-  NumericVector result(0);
-  int c = p.size();
-  // Find the cluster proportions
-  for (int b = 0; b < iterations; b++) {
-    // Create bootstrap clusters
-    NumericVector fullSample(0);
-    for (int i = 0; i < c; i++) {
-      NumericVector clusterSample(0);
-      for (int j = 0; j < classes.size(); j++) {
-        if (classes[j] == i + 1) {
-          clusterSample.push_back(data[j]);
-        }
-      }
-      if (clusterSample.size() > 0) {
-        NumericVector bootSample = sample(clusterSample, p[i]*data.size(), true);
-        for (int b = 0; b < bootSample.size(); b++) {
-          fullSample.push_back(bootSample[b]);
-        }
-      }
-    }
-    
-    // EM algorithm
-    NumericVector em_eval = helper::em_helper(fullSample, p, theta);
-    for (int i = 0; i < em_eval.length(); i++) {
-      result.push_back(em_eval[i]);
-    }
+List em_norm4(NumericVector y, NumericVector p, NumericVector theta, 
+             bool classes = false) {
+  int n = y.size();
+  NumericVector w1_tot(n);
+  NumericVector w2_tot(n);
+  NumericVector w3_tot(n);
+  NumericVector w4_tot(n);
+  double mu1 = theta[0];
+  double mu2 = theta[1];
+  double mu3 = theta[2];
+  double mu4 = theta[3];
+  double p1 = p[0];
+  double p2 = p[1];
+  double p3 = p[2];
+  double p4 = p[3];
+  for (int i = 0; i < 100; i++) {
+      // E
+      NumericVector w1 = p1 * dnorm(y, mu1);
+      NumericVector w2 = p2 * dnorm(y, mu2);
+      NumericVector w3 = p3 * dnorm(y, mu3);
+      NumericVector w4 = p4 * dnorm(y, mu4);
+
+      w1_tot = w1 / (w1 + w2 + w3 + w4);
+      w2_tot = w2 / (w1 + w2 + w3 + w4);
+      w3_tot = w3 / (w1 + w2 + w3 + w4);
+      w4_tot = w4 / (w1 + w2 + w3 + w4);
+      
+      //M
+      mu1 = sum(w1_tot * y) / sum(w1_tot);
+      mu2 = sum(w2_tot * y) / sum(w2_tot);
+      mu3 = sum(w3_tot * y) / sum(w3_tot);
+      mu4 = sum(w4_tot * y) / sum(w4_tot);
+      p1 = sum(w1_tot)/n;
+      p2 = sum(w2_tot)/n;
+      p3 = sum(w3_tot)/n;
+      p4 = sum(w4_tot)/n;
   }
-  return result;
+  NumericVector p_hat = {p1, p2, p3, p4};
+  NumericVector theta_hat = {mu1, mu2, mu3, mu4};
+  if (classes) {
+      return List::create(p_hat, theta_hat, w1_tot, w2_tot, w3_tot, w4_tot);
+  }
+  return List::create(p_hat, theta_hat);
 }
 ```
 
 
 ```{r}
-# Stratified bootstrap:  R version
-strtBoot = function(data, classes, params, iterations) {
-  theta = params[3:4]
-  p = params[1:2]
+regularBoot = function(i, data, p, theta) {
+  s = as.matrix(sample(data, length(data), replace = TRUE))
+  if (length(p) > 2) {
+    theta = unlist(em_norm4(s, p, theta))
+  } else {
+    theta = unlist(em_norm(s, p, theta))
+  }
+  return(theta)
+}
+
+strtBoot = function(data, classes, p, theta, iterations) {
   result = c()
   c = length(p)
   # Find the cluster proportions
@@ -152,23 +123,13 @@ strtBoot = function(data, classes, params, iterations) {
     }
     
     # EM algorithm
-    result = rbind(result, unlist(em_norm(fullSample, p, theta)))
+    if (length(p) > 2) {
+      result = rbind(result, unlist(em_norm4(fullSample, p, theta)))
+    } else {
+      result = rbind(result, unlist(em_norm(fullSample, p, theta)))
+    }
   }
   return(result)
-}
-
-regularBoot = function(data, params, iterations) {
-  s = data
-  theta = matrix(nrow = 0, ncol = 4)
-  
-  for (j in 1:iterations) {
-    # Get EM estimates 
-    theta = rbind(theta, unlist(em_norm(s, params[1:2], params[3:4])))
-    
-    # Increment j
-    s = as.matrix(sample(data, length(data), replace = TRUE))
-  }
-  return(theta)
 }
 ```
 
@@ -184,7 +145,7 @@ using namespace std;
 
 namespace helper{ 
   NumericMatrix findPermutations(IntegerVector& c, int n) { 
-    NumericVector perm(4);
+    NumericVector perm(0);
     // Sort the given array 
     sort(c.begin(), c.end()); 
     // Find all possible permutations 
@@ -208,25 +169,34 @@ vec complh(int n, vec theta_hat, vec p_hat, NumericVector latent_labels) {
   NumericVector x(n);
   NumericMatrix z(m, n);
   IntegerVector classes =  seq(1, m);
-  NumericVector prop(m);
-  prop[0] = p_hat[0];
-  prop[1] = p_hat[1];
   for (int i = 0; i < n; i++) {
-    if (latent_labels[i] ==1) {
+    if (latent_labels[i] == 1) {
+      z(0,i) = 1;
+    } else {
+      z(0,i) = 0;
+    }
+    if (latent_labels[i] == 2) {
       z(1,i) = 1;
     } else {
       z(1,i) = 0;
     }
-    if (latent_labels[i] == 2) {
-      z(2,i) = 1;
-    } else {
-      z(2,i) = 0;
+    if (m > 2) {
+      if (latent_labels[i] == 3) {
+        z(2,i) = 1;
+      } else {
+        z(2,i) = 0;
+      }
+      if (latent_labels[i] == 4) {
+        z(3,i) = 1;
+      } else {
+        z(3,i) = 0;
+      }
     }
-    x[i] = R::rnorm(theta_hat[latent_labels[i]], 1);
+
+    x[i] = R::rnorm(theta_hat[latent_labels[i] - 1], 1);
   }
   // Label Adjustment using complete log likelihood
   NumericMatrix perm = helper::findPermutations(classes, m);
-
   double ratio_sum = -10000000;
   NumericVector ratio(n);
   int max_perm = 0;
@@ -235,9 +205,9 @@ vec complh(int n, vec theta_hat, vec p_hat, NumericVector latent_labels) {
     for (int i = 0; i < n; i++) {
       int num = 0;
       for (int j = 0; j < m; j++) {
-        double mean = theta_hat[p[j]];
+        double mean = theta_hat[p[j] - 1];
         double like = R::dnorm(x[i], mean, 1, 0);
-        double eval = z(j,i)*log(p_hat[p[j]]*like);
+        double eval = z(j,i)*log(p_hat[p[j] - 1]*like);
         num = num + eval;
       }
       ratio[i] = num;
@@ -260,21 +230,30 @@ vec distlat(int n, vec theta_hat, vec p_hat, NumericVector latent_labels) {
   NumericVector x(n);
   NumericMatrix z(m, n);
   IntegerVector classes =  seq(1, m);
-  NumericVector prop(m);
-  prop[0] = p_hat[0];
-  prop[1] = p_hat[1];
   for (int i = 0; i < n; i++) {
     if (latent_labels[i] ==1) {
+      z(0,i) = 1;
+    } else {
+      z(0,i) = 0;
+    }
+    if (latent_labels[i] == 2) {
       z(1,i) = 1;
     } else {
       z(1,i) = 0;
     }
-    if (latent_labels[i] == 2) {
-      z(2,i) = 1;
-    } else {
-      z(2,i) = 0;
+    if (m > 2) {
+      if (latent_labels[i] == 3) {
+        z(2,i) = 1;
+      } else {
+        z(2,i) = 0;
+      }
+      if (latent_labels[i] == 4) {
+        z(3,i) = 1;
+      } else {
+        z(3,i) = 0;
+      }
     }
-    x[i] = R::rnorm(theta_hat[latent_labels[i]], 1);
+    x[i] = R::rnorm(theta_hat[latent_labels[i] - 1], 1);
   }
   // Label Adjustment using complete log likelihood
   NumericMatrix perm = helper::findPermutations(classes, m);
@@ -287,9 +266,9 @@ vec distlat(int n, vec theta_hat, vec p_hat, NumericVector latent_labels) {
     for (int i = 0; i < n; i++) {
       int num = 0;
       for (int j = 0; j < m; j++) {
-        double mean = theta_hat[p[j]];
+        double mean = theta_hat[p[j] - 1];
         double like = R::dnorm(x[i], mean, 1, 0);
-        double eval = z(j,i)*p_hat[p[j]]*like;
+        double eval = z(j,i)*p_hat[p[j] - 1]*like;
         num = num + eval;
       }
       ratio[i] = num;
@@ -303,32 +282,6 @@ vec distlat(int n, vec theta_hat, vec p_hat, NumericVector latent_labels) {
   vec sorted_p = helper::perm_sort(p_hat, y);
   vec sorted_theta = helper::perm_sort(theta_hat, y);
   return join_cols(sorted_p, sorted_theta);
-}
-
-```
-
-```{r}
-fake_data = as.data.frame(matrix(c(x,label), ncol = 2))
-colnames(fake_data) = c("Value", "Label")
-fake_data = rowid_to_column(fake_data)
-fake_data = fake_data %>%
-  mutate(Label = as.factor(Label)) 
-
-ggplot() + 
-  geom_point(aes(Value, rowid, color = Label), fake_data) +
-  theme_minimal() + 
-  geom_text(x=3, y=30, label="Log-Likelihood = -412.6700")
-
-
-fake_data = fake_data %>%
-  mutate(Label = ifelse(Label == "1", "2", "1"))
-ggplot() + 
-  geom_point(aes(Value, rowid, color = Label), fake_data) +
-  theme_minimal() + 
-  annotate("text", x=8, y=13, label= "Log-Likelihood = -412.6700") 
-
-likelihood = function(x, p, theta) {
-  return(sum(log(p[1]*dnorm(x, theta[1]) + p[2]*dnorm(x, theta[2]))))
 }
 ```
 
@@ -352,6 +305,7 @@ simulations = function(true_p, true_theta, n) {
     # Get initial values from kmeans
     initial_theta = sort(kmeans(data, 2)$centers[,1])
     initial_p = sort(kmeans(data, 2)$size / length(data))
+
     
     # Perform EM
     em_result = em_norm(data, initial_p, initial_theta, classes = TRUE)
@@ -372,7 +326,7 @@ simulations = function(true_p, true_theta, n) {
       mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot), 1, 2))
     
     # Perform Non Parametric Bootstrap
-    regBoot = regularBoot(data, params = c(p_hat, theta_hat), iterations)
+    regBoot = t(matrix(unlist(mclapply(1:iterations, regularBoot, data = data, p = p_hat, theta = theta_hat)), nrow = 4))
     
     # Perform Parametric Bootstrap with Label Adjustment
     adjBoot = matrix(ncol = 4, nrow = iterations)
@@ -420,7 +374,7 @@ simulations = function(true_p, true_theta, n) {
       distBoot[i,] = distlat(n, em[[2]], em[[1]], df$Classification)
     }
     
-    sBoot = strtBoot(data, df$Classification, c(p_hat, theta_hat), iterations)
+    sBoot = strtBoot(data, df$Classification, p_hat, theta_hat, iterations)
     regCI = c()
     adjCI = c()
     distCI = c()
@@ -437,15 +391,15 @@ simulations = function(true_p, true_theta, n) {
     distList = append(distList, list(distCI))
     stratList = append(stratList, list(stratCI))
   }
-    
+
     regCoverage = numeric(4)
     stratCoverage = numeric(4)
     adjCoverage = numeric(4)
     distCoverage = numeric(4)
     for (j in 1:4) {
       params = c(true_p, true_theta)
-      coverage = numeric(100)
-      for (i in 1:100) {
+      coverage = numeric(iterations)
+      for (i in 1:iterations) {
         CI = regList[[i]][j,]
         coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
       }
@@ -476,9 +430,185 @@ simulations = function(true_p, true_theta, n) {
     table = rbind(regCoverage, rbind(adjCoverage, rbind(distCoverage, stratCoverage)))
     return(table)
 }
+
+simulations4 = function(true_p, true_theta, n) {
+  regList = list()
+  stratList = list()
+  adjList = list()
+  distList = list()
+  for (j in 1:100) {
+    # Simulate Data
+    p_multi = rmultinom(n, 1, true_p)
+    dens = matrix(c(rnorm(n, true_theta[1]), rnorm(n, true_theta[2]), 
+                    rnorm(n, true_theta[3]), rnorm(n, true_theta[4])), ncol = 4)
+    
+    data = p_multi[1,]*dens[1,] + p_multi[2,]*dens[2,] + 
+      p_multi[3,]*dens[3,] + p_multi[4,]*dens[4,]
+    
+    # Get initial values from kmeans
+    initial_theta = sort(kmeans(data, 4)$centers[,1])
+    initial_p = sort(kmeans(data, 4)$size / length(data))
+    
+    # Perform EM
+    em_result = em_norm4(data, initial_p, initial_theta, classes = TRUE)
+    
+    theta_hat = em_result[[2]]
+    p_hat = em_result[[1]]
+        
+    # Set number of iterations
+    iterations = 100
+        
+    # Perform Stratified Bootstrap
+    w2_tot = em_result[[4]]
+    w1_tot = em_result[[3]]
+    w3_tot = em_result[[5]]
+    w4_tot = em_result[[6]]
+    
+    df = data.frame(w1_tot, 
+                   w2_tot, w3_tot, w4_tot)
+    df = df %>%
+          rowwise() %>%
+          mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 1, 
+                                         ifelse(w2_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 2,
+                                                ifelse(w3_tot == max(w1_tot, w2_tot, 
+                                                                     w3_tot, w4_tot), 3, 4))))
+        
+    # Perform Non Parametric Bootstrap
+    regBoot = t(matrix(unlist(mclapply(1:iterations, regularBoot, data = data, p = p_hat, theta = theta_hat)), nrow = 8))
+    
+    # Perform Parametric Bootstrap with Label Adjustment
+    adjBoot = matrix(ncol = 8, nrow = iterations)
+    for (i in 1:iterations) {
+      # Simulate Data
+      p_multi = rmultinom(n, 1, p_hat)
+      dens = matrix(c(rnorm(n, theta_hat[1]), 
+                        rnorm(n, theta_hat[2]),
+                        rnorm(n, theta_hat[3]), 
+                        rnorm(n, theta_hat[4])), ncol = 4)
+      
+      sample = p_multi[1,]*dens[1,] + p_multi[2,]*dens[2,] + 
+      p_multi[3,]*dens[3,] + p_multi[4,]*dens[4,]
+      
+      # Get estimates
+      em = em_norm4(sample, p_hat, theta_hat, classes = TRUE)
+      
+      w1_tot = em[[3]]
+      w2_tot = em[[4]]
+      w3_tot = em[[5]]
+      w4_tot = em[[6]]
+      
+      df = data.frame(w1_tot, 
+                 w2_tot, w3_tot, w4_tot)
+      df = df %>%
+            rowwise() %>%
+            mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 1, 
+                                           ifelse(w2_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 2,
+                                                  ifelse(w3_tot == max(w1_tot, w2_tot, 
+                                                                       w3_tot, w4_tot), 3, 4))))
+      
+      # Label Adjustment
+      adjBoot[i,] = complh(n, em[[2]], em[[1]], df$Classification)
+    }
+    
+     # Perform Parametric Bootstrap with Label Adjustment DISTLAT
+    distBoot = matrix(ncol = 8, nrow = iterations)
+    for (i in 1:iterations) {
+      # Simulate Data
+      p_multi = rmultinom(n, 1, p_hat)
+      dens = matrix(c(rnorm(n, theta_hat[1]), 
+                        rnorm(n, theta_hat[2]),
+                        rnorm(n, theta_hat[3]), 
+                        rnorm(n, theta_hat[4])), ncol = 4)
+      
+      sample = p_multi[1,]*dens[1,] + p_multi[2,]*dens[2,] + 
+      p_multi[3,]*dens[3,] + p_multi[4,]*dens[4,]
+      
+      # Get estimates
+      em = em_norm4(sample, p_hat, theta_hat, classes = TRUE)
+      
+      w1_tot = em[[3]]
+      w2_tot = em[[4]]
+      w3_tot = em[[5]]
+      w4_tot = em[[6]]
+      
+      df = data.frame(w1_tot, 
+                 w2_tot, w3_tot, w4_tot)
+      
+      df = df %>%
+          rowwise() %>%
+          mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 1, 
+                                         ifelse(w2_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 2,
+                                                ifelse(w3_tot == max(w1_tot, w2_tot, 
+                                                                     w3_tot, w4_tot), 3, 4))))
+      
+      # Label Adjustment
+      distBoot[i,] = distlat(n, em[[2]], em[[1]], df$Classification)
+    }
+  
+      sBoot = strtBoot(data, df$Classification, p_hat, theta_hat, iterations)
+  
+      regCI = c()
+      adjCI = c()
+      distCI = c()
+      stratCI = c()
+      # Get quantile CI
+      for (i in 1:8) {
+        regCI = rbind(regCI, quantile(regBoot[,i], c(.025,.975)))
+        adjCI = rbind(adjCI, quantile(adjBoot[,i], c(.025, .975)))
+        distCI = rbind(distCI, quantile(distBoot[,i], c(.025, .975)))
+        stratCI = rbind(stratCI, quantile(sBoot[,i], c(.025,.975)))
+      }
+      regList = append(regList, list(regCI))
+      adjList = append(adjList, list(adjCI))
+      distList = append(distList, list(distCI))
+      stratList = append(stratList, list(stratCI))
+    }
+
+    
+    regCoverage = numeric(8)
+    stratCoverage = numeric(8)
+    adjCoverage = numeric(8)
+    distCoverage = numeric(8)
+    for (j in 1:8) {
+      params = c(true_p, true_theta)
+      coverage = numeric(iterations)
+      for (i in 1:iterations) {
+        CI = regList[[i]][j,]
+        coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+      }
+      regCoverage[j] = sum(coverage)
+      
+      coverage = numeric(100)
+      for (i in 1:100) {
+        CI = adjList[[i]][j,]
+        coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+      }
+      adjCoverage[j] = sum(coverage)
+      
+      coverage = numeric(100)
+      for (i in 1:100) {
+        CI = distList[[i]][j,]
+        coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+      }
+      distCoverage[j] = sum(coverage)
+      
+      coverage = numeric(100)
+      for (i in 1:100) {
+        CI = stratList[[i]][j,]
+        coverage[i] = ifelse(CI[1] < params[j] && CI[2] > params[j], 1, 0)
+      }
+      stratCoverage[j] = sum(coverage)
+    }
+    
+    table = rbind(regCoverage, rbind(adjCoverage, rbind(distCoverage, stratCoverage)))
+    return(table)
+}
+
+
+
 ```
 
-1000 Bootstrap runs, n = 100
+100 Bootstrap runs, n = 100
 
 Scenario 1: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 0.5$$
 
@@ -511,16 +641,16 @@ Scenario 4: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, \mu_2 = 2$$
 
 ```{r}
 table4 = simulations(c(.5,.5), c(0, 2), 100)
-colnames(table4) = c("P1", "P2", "Theta1", "Theta2")
+colnames(table4) = c("P1", "P2", "Lambda 1", "Lambda 2")
 knitr::kable(table4)
 table4 = cbind(table4, Diff = rep(2, 4))
 ```
 
 ```{r}
 plot_df = as.data.frame(rbind(table1, rbind(table2, rbind(table3, table4))))
-plot_df = cbind(plot_df, Method = rep(c("Non-Parametric", "COMPLH", "DISTLAT", "Strat"), 4))
-
-plot_simulations = function(param, options, plot_df, title) {
+plot_df = cbind(Method = rep(c("Non-Parametric", "COMPLH", "DISTLAT", "Strat"), 4), plot_df)
+write.csv(plot_df, "first_table.csv", row.names = FALSE)
+plot_simulations = function(param, options, plot_df, title, xlab, ylab) {
   yvar = sym(options[param])
   print(yvar)
   ggplot() + 
@@ -528,55 +658,184 @@ plot_simulations = function(param, options, plot_df, title) {
     geom_line(aes(Diff, !!yvar, color = Method), plot_df) + 
     theme_minimal() + 
     ggtitle(title) + 
-    ylab("Coverage Probability") + 
+    ylab(ylab) + 
+    xlab(xlab) + 
+    geom_hline(yintercept = 95, color = "black") + 
     theme(plot.title = element_text(hjust = 0.5))
 }
 
-plot_simulations(1, c("P1", "P2", "Theta1", "Theta2"), plot_df, "P")
-plot_simulations(3, c("P1", "P2", "Theta1", "Theta2"), plot_df, "Lambda 1")
-plot_simulations(4, c("P1", "P2", "Theta1", "Theta2"), plot_df, "Lambda 2")
+p1 = plot_simulations(1, c("P1", "P2", "Theta1", "Theta2"), plot_df, "P", "", 
+                      "Coverage Probability")
+p2 = plot_simulations(3, c("P1", "P2", "Theta1", "Theta2"), plot_df, "Lambda 1", "Difference in Lambdas", "")
+p3 = plot_simulations(4, c("P1", "P2", "Theta1", "Theta2"), plot_df, "Lambda 2", "", "")
+ggsave("first_grid.jpeg",ggpubr::ggarrange(p1, p2, p3, common.legend = TRUE, nrow = 1),
+       width = 10, height =7)
 ```
 
-1000 Bootstrap runs, n = 50
+100 Bootstrap runs, n = 100
 
-Scenario 1: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 0.5$$
+Scenario 1: $$p_1 = 0.2, p_2 = 0.8, \mu_1 = 0, \mu_2 = 0.5$$
 
 ```{r}
-table1_50 = simulations(c(.5,.5), c(0, .5), 50)
-colnames(table1_50) = c("P1", "P2", "Theta1", "Theta2")
-knitr::kable(table1_50)
+table1_2 = simulations(c(.2,.8), c(0, .5), 100)
+colnames(table1_2) = c("P1", "P2", "Theta1", "Theta2")
+knitr::kable(table1_2)
+table1_2 = cbind(table1_2, Diff = rep(.5, 4))
 ```
 
-Scenario 2: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 1$$
+Scenario 2: $$p_1 = 0.2, p_2 = 0.8, \mu_1 = 0, \mu_2 = 1$$
 
 ```{r}
-table2_50 = simulations(c(.5,.5), c(0, 1), 50)
-colnames(table2_50) = c("P1", "P2", "Theta1", "Theta2")
-knitr::kable(table2_50)
+table2_2 = simulations(c(.2,.8), c(0, 1), 100)
+colnames(table2_2) = c("P1", "P2", "Theta1", "Theta2")
+knitr::kable(table2_2)
+table2_2 = cbind(table2_2, Diff = rep(1, 4))
 ```
 
-Scenario 4: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 2$$
+Scenario 4: $$p_1 = 0.2, p_2 = 0.8, \mu_1 = 0, \mu_2 = 2$$
 
 ```{r}
-table3_50 = simulations(c(.5,.5), c(0, 1.5), 50)
-colnames(table3_50) = c("P1", "P2", "Theta1", "Theta2")
-knitr::kable(table3_50)
+table3_2 = simulations(c(.2,.8), c(0, 1.5), 100)
+colnames(table3_2) = c("P1", "P2", "Theta1", "Theta2")
+knitr::kable(table3_2)
+table3_2 = cbind(table3_2, Diff = rep(1.5, 4))
 ```
 
-Scenario 4: $$p_1 = 0.5, p_2 = 0.5, \mu_1 = 0, mu_2 = 2$$
+Scenario 4: $$p_1 = 0.2, p_2 = 0.8, \mu_1 = 0, \mu_2 = 2$$
 
 ```{r}
-table4_50 = simulations(c(.5,.5), c(0, 2), 50)
-colnames(table4_50) = c("P1", "P2", "Theta1", "Theta2")
-knitr::kable(table4_50)
+table4_2 = simulations(c(.2,.8), c(0, 2), 100)
+colnames(table4_2) = c("P1", "P2", "Theta1", "Theta2")
+knitr::kable(table4_2)
+table4_2 = cbind(table4_2, Diff = rep(2, 4))
 ```
 
-1000 Bootstrap runs, n = 200
+```{r}
+plot_df2 = as.data.frame(rbind(table1_2, rbind(table2_2, rbind(table3_2, table4_2))))
+plot_df2 = cbind(Method = rep(c("Non-Parametric", "COMPLH", "DISTLAT", "Strat"), 4),plot_df2)
+write.csv(plot_df2, "second_table.csv", row.names = FALSE)
+p1 = plot_simulations(1, c("P1", "P2", "Theta1", "Theta2"), plot_df2, "P", "", 
+                      "Coverage Probability")
+p2 = plot_simulations(3, c("P1", "P2", "Theta1", "Theta2"), plot_df2, "Lambda 1", "Difference in Lambdas", "")
+p3 = plot_simulations(4, c("P1", "P2", "Theta1", "Theta2"), plot_df2, "Lambda 2", "", "")
+ggsave("second_grid.jpeg",ggpubr::ggarrange(p1, p2, p3, common.legend = TRUE, nrow = 1),
+       width = 10, height =7)
+```
 
-Scenario 1: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 0.5$$
+100 Bootstrap runs, n = 100
 
-Scenario 2: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 1$$
+Scenario 1: $$\pi_1 = \pi_2 = \pi_3 = \pi_4 = 0.25, \mu_1 = 0, \mu_2 = 1, \mu_3 = 2, \mu_4 = 3$$
+```{r}
+table1_3 = simulations4(rep(1/4,4), seq(0, 3, 1), 100)
+colnames(table1_3) = c("P1", "P2", "P3", "P4", 
+                     "Theta1", "Theta2", "Theta3", "Theta4")
+knitr::kable(table1_3)
+table1_3 = cbind(table1_3, Diff = rep(sqrt(sum(seq(0, 3, 1)^2)), 8))
+```
+Scenario 2:
+```{r}
+table2_3 = simulations4(rep(1/4,4), seq(0, 6, 2), 100)
+colnames(table2_3) = c("P1", "P2", "P3", "P4", 
+                     "Theta1", "Theta2", "Theta3", "Theta4")
+knitr::kable(table2_3)
+table2_3 = cbind(table2_3, Diff = rep(sqrt(sum(seq(0, 6, 2)^2)), 4))
+```
 
-Scenario 3: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 1.5$$
+Scenario 3:
+```{r}
+table3_3 = simulations4(rep(1/4,4), seq(0, 9, 3), 100)
+colnames(table3_3) = c("P1", "P2", "P3", "P4", 
+                     "Theta1", "Theta2", "Theta3", "Theta4")
+knitr::kable(table3_3)
+table3_3 = cbind(table3_3, Diff = rep(sqrt(sum(seq(0, 9, 3)^2)), 4))
+```
 
-Scenario 4: $$p_1 = 0.3, p_2 = 0.7, \mu_1 = 0, mu_2 = 2$$
+Scenario 4:
+```{r}
+table4_3 = simulations4(rep(1/4,4), seq(0, 12, 4), 100)
+colnames(table4_3) = c("P1", "P2", "P3", "P4", 
+                     "Theta1", "Theta2", "Theta3", "Theta4")
+knitr::kable(table4_3)
+table4_3 = cbind(table4_3, Diff = rep(sqrt(sum(seq(0, 12, 4)^2)), 4))
+```
+
+```{r}
+plot_df3 = as.data.frame(rbind(table1_3, rbind(table2_3, rbind(table3_3, table4_3))))
+plot_df3 = cbind(Method = rep(c("Non-Parametric", "COMPLH", "DISTLAT", "Strat"), 4), plot_df3)
+write.csv(plot_df3, "third_table.csv", row.names = FALSE)
+p1 = plot_simulations(5, c("P1", "P2", "P3", "P4", "Theta1", "Theta2", "Theta3", "Theta4"), plot_df3, "Lambda 1", "", 
+                      "Coverage Probability")
+p2 = plot_simulations(6,c("P1", "P2", "P3", "P4", "Theta1", "Theta2", "Theta3", "Theta4"), 
+                      plot_df3, "Lambda 2", "Difference in Lambdas", "")
+p3 = plot_simulations(7, c("P1", "P2", "P3", "P4", "Theta1", "Theta2", "Theta3", "Theta4"), 
+                      plot_df3, "Lambda 3", "", "")
+p4 = plot_simulations(8, c("P1", "P2", "P3", "P4", "Theta1", "Theta2", "Theta3", "Theta4"),
+                      plot_df3, "Lambda 4", "", "")
+ggsave("third_grid.jpeg",ggpubr::ggarrange(p1, p2, p3,p4, common.legend = TRUE, nrow = 1),
+       width = 10, height =7)
+```
+
+```{r}
+plot_clusters = function(true_p, true_theta, n) {
+  # Simulate Data
+  p_multi = rmultinom(n, 1, true_p)
+  dens = matrix(c(rnorm(n, true_theta[1]), rnorm(n, true_theta[2]), 
+                  rnorm(n, true_theta[3]), rnorm(n, true_theta[4])), ncol = 4)
+  
+  data = p_multi[1,]*dens[1,] + p_multi[2,]*dens[2,] + 
+    p_multi[3,]*dens[3,] + p_multi[4,]*dens[4,]
+  
+  # Get initial values from kmeans
+  initial_theta = sort(kmeans(data, 4)$centers[,1])
+  initial_p = sort(kmeans(data, 4)$size / length(data))
+  
+  # Perform EM
+  em_result = em_norm4(data, initial_p, initial_theta, classes = TRUE)
+  
+  theta_hat = em_result[[2]]
+  p_hat = em_result[[1]]
+      
+  # Set number of iterations
+  iterations = 1000
+      
+  # Perform Stratified Bootstrap
+  w2_tot = em_result[[4]]
+  w1_tot = em_result[[3]]
+  w3_tot = em_result[[5]]
+  w4_tot = em_result[[6]]
+  
+  df = data.frame(w1_tot, 
+                 w2_tot, w3_tot, w4_tot)
+  df = df %>%
+        rowwise() %>%
+        mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 1, 
+                                       ifelse(w2_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 2,
+                                              ifelse(w3_tot == max(w1_tot, w2_tot, 
+                                                                   w3_tot, w4_tot), 3, 4))))
+      
+  # Perform Non Parametric Bootstrap
+  theta = matrix(nrow = 0, ncol = 8)
+  for (i in 1:1000) {
+    s = as.matrix(sample(data, length(data), replace = TRUE))
+    reg_list = em_norm4(s, p_hat, theta_hat, classes = TRUE)
+    w1_tot = reg_list[[3]]
+    w2_tot = reg_list[[4]]
+    w3_tot = reg_list[[5]]
+    w4_tot = reg_list[[6]]
+    
+    df_reg = data.frame(w1_tot, 
+                 w2_tot, w3_tot, w4_tot)
+    df_reg = df %>%
+        rowwise() %>%
+        mutate(Classification = ifelse(w1_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 1, 
+                                       ifelse(w2_tot == max(w1_tot, w2_tot, w3_tot, w4_tot), 2,
+                                              ifelse(w3_tot == max(w1_tot, w2_tot, 
+                                                                   w3_tot, w4_tot), 3, 4))))
+  }
+
+t = em_norm4(s, p_hat, theta_hat, classes = TRUE)
+  
+  
+  return(table)
+}
+```
