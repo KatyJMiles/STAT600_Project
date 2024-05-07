@@ -355,3 +355,18 @@ simulations4 = function(true_p, true_theta, n) {
   table = rbind(regCoverage, rbind(adjCoverage, rbind(distCoverage, stratCoverage)))
   return(table)
 }
+
+plot_simulations = function(param, options, plot_df, title, xlab, ylab) {
+  library(tidyverse)
+  yvar = sym(options[param])
+  print(yvar)
+  ggplot() + 
+    geom_point(aes(Diff, !!yvar, color = Method), plot_df) + 
+    geom_line(aes(Diff, !!yvar, color = Method), plot_df) + 
+    theme_minimal() + 
+    ggtitle(title) + 
+    ylab(ylab) + 
+    xlab(xlab) + 
+    geom_hline(yintercept = 95, color = "black") + 
+    theme(plot.title = element_text(hjust = 0.5))
+}

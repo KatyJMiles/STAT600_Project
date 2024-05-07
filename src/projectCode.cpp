@@ -1,6 +1,6 @@
 #include <RcppArmadillo.h>
-#include <bits/stdc++.h> 
 // [[Rcpp::depends(RcppArmadillo)]]
+#include <bits/stdc++.h> 
 using namespace Rcpp;
 using namespace arma;
 using namespace std;
